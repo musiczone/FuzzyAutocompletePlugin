@@ -13,24 +13,9 @@
 NSString * FASettingsPluginEnabledDidChangeNotification = @"io.github.FuzzyAutocomplete.PluginEnabledDidChange";
 
 // increment to show settings screen to the user
-static const NSUInteger kSettingsVersion = 2;
+static const NSUInteger kSettingsVersion = 3;
 
 @interface FASettings () <NSWindowDelegate>
-
-@property (nonatomic, readwrite) BOOL pluginEnabled;
-
-@property (nonatomic, readwrite) double minimumScoreThreshold;
-@property (nonatomic, readwrite) BOOL filterByScore;
-@property (nonatomic, readwrite) BOOL sortByScore;
-@property (nonatomic, readwrite) BOOL showScores;
-@property (nonatomic, readwrite) NSString * scoreFormat;
-@property (nonatomic, readwrite) NSInteger maximumWorkers;
-@property (nonatomic, readwrite) BOOL parallelScoring;
-
-@property (nonatomic, readwrite) double matchScorePower;
-@property (nonatomic, readwrite) double priorityPower;
-@property (nonatomic, readwrite) double priorityFactorPower;
-@property (nonatomic, readwrite) double maxPrefixBonus;
 
 @end
 
@@ -52,38 +37,55 @@ static const NSUInteger kSettingsVersion = 2;
     [self loadFromDefaults];
     NSBundle * bundle = [NSBundle bundleForClass: [self class]];
     NSArray * objects;
-    if ([bundle loadNibNamed: @"FASettingsWindow" owner: self topLevelObjects: &objects]) {
-        NSWindow * window = nil;
+    NSWindow * window = nil;
+    @try {
+        [bundle loadNibNamed: @"FASettingsWindow" owner: self topLevelObjects: &objects];
         for (id object in objects) {
             if ([object isKindOfClass: [NSWindow class]]) {
                 window = object;
                 break;
             }
         }
-        if (window) {
-            window.minSize = window.frame.size;
-            window.maxSize = window.frame.size;
-            NSString * title = bundle.lsl_bundleNameWithVersion;
-            NSTextField * label = (NSTextField *) [window.contentView viewWithTag: 42];
-            NSMutableAttributedString * attributed = [[NSMutableAttributedString alloc] initWithString: title];
-            FATheme * theme = [FATheme cuurrentTheme];
-            [attributed addAttributes: theme.listTextAttributesForMatchedRanges range: NSMakeRange(0, 1)];
-            [attributed addAttributes: theme.listTextAttributesForMatchedRanges range: NSMakeRange(5, 1)];
-            [attributed addAttributes: theme.previewTextAttributesForNotMatchedRanges range: NSMakeRange(18, title.length-18)];
-            NSMutableParagraphStyle * style = [[NSParagraphStyle defaultParagraphStyle] mutableCopy];
-            style.alignment = NSCenterTextAlignment;
-            [attributed addAttribute: NSParagraphStyleAttributeName value: style range: NSMakeRange(0, attributed.length)];
-            label.attributedStringValue = attributed;
+    }
+    @catch (NSException *exception) {
+        RLog(@"Exception while opening Settings Window: %@", exception);
+    }
+    
+    if (window) {
+        window.minSize = window.frame.size;
+        window.maxSize = window.frame.size;
+        NSString * title = bundle.lsl_bundleNameWithVersion;
+        NSTextField * label = (NSTextField *) [window.contentView viewWithTag: 42];
+        NSMutableAttributedString * attributed = [[NSMutableAttributedString alloc] initWithString: title];
+        FATheme * theme = [FATheme cuurrentTheme];
+        [attributed addAttributes: theme.listTextAttributesForMatchedRanges range: NSMakeRange(0, 1)];
+        [attributed addAttributes: theme.listTextAttributesForMatchedRanges range: NSMakeRange(5, 1)];
+        [attributed addAttributes: theme.previewTextAttributesForNotMatchedRanges range: NSMakeRange(18, title.length-18)];
+        NSMutableParagraphStyle * style = [[NSParagraphStyle defaultParagraphStyle] mutableCopy];
+        style.alignment = NSCenterTextAlignment;
+        [attributed addAttribute: NSParagraphStyleAttributeName value: style range: NSMakeRange(0, attributed.length)];
+        label.attributedStringValue = attributed;
 
-            BOOL enabled = self.pluginEnabled;
+        BOOL enabled = self.pluginEnabled;
 
-            [NSApp runModalForWindow: window];
+        [NSApp runModalForWindow: window];
 
-            if (self.pluginEnabled != enabled) {
-                [[NSNotificationCenter defaultCenter] postNotificationName: FASettingsPluginEnabledDidChangeNotification object: self];
+        if (self.pluginEnabled != enabled) {
+            [[NSNotificationCenter defaultCenter] postNotificationName: FASettingsPluginEnabledDidChangeNotification object: self];
+        }
+
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    } else {
+        NSString * reportIssueURL = [bundle objectForInfoDictionaryKey: @"FAReportIssueURL"];
+        if (reportIssueURL) {
+            NSAlert * alert = [NSAlert alertWithMessageText: [NSString stringWithFormat: @"Failed to open %@ settings.", bundle.lsl_bundleName]
+                                              defaultButton: @"OK"
+                                            alternateButton: @"Report an Issue"
+                                                otherButton: nil
+                                  informativeTextWithFormat: @"This might happen when updating the plugin to a newer version. To completely load the new plugin Xcode restart is required.\n\nIf the issue persists after a restart please report an issue."];
+            if ([alert runModal] == NSAlertAlternateReturn) {
+                [[NSWorkspace sharedWorkspace] openURL: [NSURL URLWithString: reportIssueURL]];
             }
-
-            [[NSUserDefaults standardUserDefaults] synchronize];
         }
     }
 }
@@ -104,6 +106,7 @@ static const BOOL kDefaultSortByScore = YES;
 static const BOOL kDefaultFilterByScore = YES;
 static const BOOL kDefaultShowScores = NO;
 static const BOOL kDefaultShowInlinePreview = YES;
+static const BOOL kDefaultHideCursorInNonPrefixPreview = NO;
 static const BOOL kDefaultShowListHeader = NO;
 static const BOOL kDefaultNormalizeScores = NO;
 static const BOOL kDefaultShowTiming = NO;
@@ -113,6 +116,13 @@ static const double kDefaultMatchScorePower = 2.0;
 static const double kDefaultPriorityPower = 0.5;
 static const double kDefaultPriorityFactorPower = 0.5;
 static const double kDefaultMaxPrefixBonus = 0.5;
+
+// experimental
+
+static const BOOL kDefaultCorrectLetterCase = NO;
+static const BOOL kDefaultCorrectLetterCaseBestMatchOnly = NO;
+static const BOOL kDefaultCorrectWordOrder = NO;
+static const NSInteger kDefaultCorrectWordOrderAfter = 2;
 
 - (IBAction)resetDefaults:(id)sender {
     self.pluginEnabled = kDefaultPluginEnabled;
@@ -125,6 +135,7 @@ static const double kDefaultMaxPrefixBonus = 0.5;
     self.normalizeScores = kDefaultNormalizeScores;
     self.showListHeader = kDefaultShowListHeader;
     self.showInlinePreview = kDefaultShowInlinePreview;
+    self.hideCursorInNonPrefixPreview = kDefaultHideCursorInNonPrefixPreview;
     self.showTiming = kDefaultShowTiming;
     self.prefixAnchor = kDefaultPrefixAnchor;
 
@@ -132,6 +143,11 @@ static const double kDefaultMaxPrefixBonus = 0.5;
     self.priorityPower = kDefaultPriorityPower;
     self.priorityFactorPower = kDefaultPriorityFactorPower;
     self.maxPrefixBonus = kDefaultMaxPrefixBonus;
+
+    self.correctLetterCase = kDefaultCorrectLetterCase;
+    self.correctLetterCaseBestMatchOnly = kDefaultCorrectLetterCaseBestMatchOnly;
+    self.correctWordOrder = kDefaultCorrectWordOrder;
+    self.correctWordOrderAfter = kDefaultCorrectWordOrderAfter;
 
     NSUInteger processors = [[NSProcessInfo processInfo] activeProcessorCount];
     self.parallelScoring = processors > 1;
@@ -160,6 +176,7 @@ static const double kDefaultMaxPrefixBonus = 0.5;
     loadNumber(maximumWorkers, MaximumWorkers);
     loadNumber(normalizeScores, NormalizeScores);
     loadNumber(showInlinePreview, ShowInlinePreview);
+    loadNumber(hideCursorInNonPrefixPreview, HideCursorInNonPrefixPreview);
     loadNumber(showListHeader, ShowListHeader);
     loadNumber(showTiming, ShowTiming);
     loadNumber(prefixAnchor, PrefixAnchor);
@@ -168,6 +185,11 @@ static const double kDefaultMaxPrefixBonus = 0.5;
     loadNumber(priorityPower, PriorityPower);
     loadNumber(priorityFactorPower, PriorityFactorPower);
     loadNumber(maxPrefixBonus, MaxPrefixBonus);
+
+    loadNumber(correctLetterCase, CorrectLetterCase);
+    loadNumber(correctLetterCaseBestMatchOnly, CorrectLetterCaseBestMatchOnly);
+    loadNumber(correctWordOrder, CorrectWordOrder);
+    loadNumber(correctWordOrderAfter, CorrectWordOrderAfter);
 
 #undef loadNumber
 
@@ -183,7 +205,7 @@ static const double kDefaultMaxPrefixBonus = 0.5;
                                           defaultButton: @"View"
                                         alternateButton: @"Skip"
                                             otherButton: nil
-                              informativeTextWithFormat: @"New settings are available for %@ plugin. Do you want to review them now? You can always access the settings later from the Menu: Editor > %@ > Plugin Settings...", pluginName, pluginName];
+                              informativeTextWithFormat: @"New settings are available for %@ plugin. Do you want to review them now?\n\nYou can always access the settings later from the Menu:\nEditor > %@ > Plugin Settings...", pluginName, pluginName];
         if ([alert runModal] == NSAlertDefaultReturn) {
             [self showSettingsWindow];
         }
@@ -200,6 +222,7 @@ static const double kDefaultMaxPrefixBonus = 0.5;
         case 0: // just break, dont migrate for 0
             break;
         case 1: // dont break, fall through to higher cases
+        case 2:
             ;
     }
 }
@@ -233,11 +256,16 @@ BOOL_SETTINGS_SETTER(sortByScore, SortByScore)
 BOOL_SETTINGS_SETTER(parallelScoring, ParallelScoring)
 BOOL_SETTINGS_SETTER(normalizeScores, NormalizeScores)
 BOOL_SETTINGS_SETTER(showInlinePreview, ShowInlinePreview)
+BOOL_SETTINGS_SETTER(hideCursorInNonPrefixPreview, HideCursorInNonPrefixPreview)
 BOOL_SETTINGS_SETTER(showListHeader, ShowListHeader)
 BOOL_SETTINGS_SETTER(showTiming, ShowTiming)
+BOOL_SETTINGS_SETTER(correctLetterCase, CorrectLetterCase);
+BOOL_SETTINGS_SETTER(correctLetterCaseBestMatchOnly, CorrectLetterCaseBestMatchOnly);
+BOOL_SETTINGS_SETTER(correctWordOrder, CorrectWordOrder);
 
 INTEGER_SETTINGS_SETTER(maximumWorkers, MaximumWorkers)
 INTEGER_SETTINGS_SETTER(prefixAnchor, PrefixAnchor)
+INTEGER_SETTINGS_SETTER(correctWordOrderAfter, CorrectWordOrderAfter);
 
 DOUBLE_SETTINGS_SETTER(minimumScoreThreshold, MinimumScoreThreshold)
 DOUBLE_SETTINGS_SETTER(matchScorePower, MatchScorePower)
